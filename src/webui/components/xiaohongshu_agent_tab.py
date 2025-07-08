@@ -299,7 +299,7 @@ def create_xiaohongshu_agent_tab(webui_manager: WebuiManager):
                     components["max_posts"] = gr.Slider(
                         label="最大发帖数量",
                         minimum=1,
-                        maximum=20,
+                        maximum=100,
                         value=5,
                         step=1,
                     )
