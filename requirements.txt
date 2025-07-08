@@ -1,0 +1,7 @@
+browser-use==0.1.48
+gradio==5.27.0
+python-dotenv>=1.0.1
+langchain-core>=0.3.49
+langchain-openai>=0.3.11
+langchain-mistralai==0.2.4
+langchain-community
