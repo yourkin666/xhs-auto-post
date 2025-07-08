@@ -1,5 +1,14 @@
 from dotenv import load_dotenv
 load_dotenv()
+
+# 禁用遥测功能
+import os
+os.environ['TELEMETRY_DISABLED'] = 'true'
+os.environ['POSTHOG_DISABLED'] = 'true'
+os.environ['DO_NOT_TRACK'] = '1'
+os.environ['ANALYTICS_DISABLED'] = 'true'
+os.environ['BROWSER_USE_TELEMETRY'] = 'false'
+
 import argparse
 from src.webui.interface import theme_map, create_ui
 

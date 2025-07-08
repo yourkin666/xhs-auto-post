@@ -223,7 +223,8 @@ def get_llm_model(provider: str, **kwargs):
         else:
             base_url = kwargs.get("base_url")
 
-        if kwargs.get("model_name", "deepseek-chat") == "deepseek-reasoner":
+        default_model = os.getenv("DEEPSEEK_DEFAULT_MODEL", "deepseek-chat")
+        if kwargs.get("model_name", default_model) == "deepseek-reasoner":
             return DeepSeekR1ChatOpenAI(
                 model=kwargs.get("model_name", "deepseek-reasoner"),
                 temperature=kwargs.get("temperature", 0.0),
@@ -232,7 +233,7 @@ def get_llm_model(provider: str, **kwargs):
             )
         else:
             return ChatOpenAI(
-                model=kwargs.get("model_name", "deepseek-chat"),
+                model=kwargs.get("model_name", default_model),
                 temperature=kwargs.get("temperature", 0.0),
                 base_url=base_url,
                 api_key=api_key,
@@ -332,7 +333,7 @@ def get_llm_model(provider: str, **kwargs):
         return ChatOpenAI(
             api_key=api_key,
             base_url=base_url,
-            model_name=kwargs.get("model_name", "deepseek-ai/DeepSeek-R1"),
+            model_name=kwargs.get("model_name", os.getenv("SILICONFLOW_DEFAULT_MODEL", "Pro/deepseek-ai/DeepSeek-V3")),
             temperature=kwargs.get("temperature", 0.0),
         )
     elif provider == "modelscope":
@@ -347,7 +348,7 @@ def get_llm_model(provider: str, **kwargs):
         return ChatOpenAI(
             api_key=api_key,
             base_url=base_url,
-            model_name=kwargs.get("model_name", "Qwen/QwQ-32B"),
+            model_name=kwargs.get("model_name", os.getenv("MODELSCOPE_DEFAULT_MODEL", "Pro/deepseek-ai/DeepSeek-V3")),
             temperature=kwargs.get("temperature", 0.0),
         )
     else:

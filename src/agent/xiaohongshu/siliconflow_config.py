@@ -30,7 +30,7 @@ class SiliconFlowConfig:
         )
     
     @classmethod
-    def get_llm_config(cls, model_name: str = "deepseek-ai/DeepSeek-R1") -> Dict[str, Any]:
+    def get_llm_config(cls, model_name: str = "Pro/deepseek-ai/DeepSeek-V3") -> Dict[str, Any]:
         """获取LLM配置"""
         api_key = cls.get_api_key()
         if not api_key:
@@ -62,8 +62,10 @@ class SiliconFlowConfig:
     def get_supported_models(cls) -> Dict[str, str]:
         """获取支持的模型列表"""
         return {
-            "deepseek-ai/DeepSeek-R1": "DeepSeek R1 - 最新推理模型",
+            "Pro/deepseek-ai/DeepSeek-V3": "DeepSeek V3 Pro - 高性能对话模型 (推荐)",
+            "Pro/deepseek-ai/DeepSeek-R1": "DeepSeek R1 Pro - 推理模型 (Pro 版本)",
             "deepseek-ai/DeepSeek-V3": "DeepSeek V3 - 高性能对话模型",
+            "deepseek-ai/DeepSeek-R1": "DeepSeek R1 - 推理模型",
             "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B": "DeepSeek R1 蒸馏版 32B",
             "deepseek-ai/DeepSeek-R1-Distill-Qwen-14B": "DeepSeek R1 蒸馏版 14B",
             "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B": "DeepSeek R1 蒸馏版 7B",

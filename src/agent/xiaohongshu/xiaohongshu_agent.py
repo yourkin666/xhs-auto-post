@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import os
+import shutil
 import signal
 import uuid
 from datetime import datetime
@@ -257,6 +258,74 @@ class XiaohongshuAgent:
             logger.info("✅ 信号处理器注册成功")
         except Exception as e:
             logger.warning(f"⚠️ 信号处理器注册失败: {e}")
+    
+    async def _delete_post_directory_async(self, post_data: Dict[str, Any]) -> bool:
+        """
+        异步删除已发布成功的帖子目录,防止重复发布
+        
+        Args:
+            post_data: 包含source_dir信息的帖子数据
+            
+        Returns:
+            bool: 删除成功返回True，失败返回False
+        """
+        source_dir = post_data.get("source_dir")
+        if not source_dir:
+            logger.warning("⚠️ 帖子数据中缺少source_dir信息，无法删除")
+            return False
+        
+        source_path = Path(source_dir)
+        if not source_path.exists():
+            logger.warning(f"⚠️ 帖子目录不存在: {source_path}")
+            return False
+        
+        try:
+            # 检查是否为有效的帖子目录（在posts_dir下）
+            if not source_path.is_relative_to(self.posts_dir):
+                logger.error(f"❌ 安全检查失败：目录不在发帖目录范围内: {source_path}")
+                return False
+            
+            # 异步删除整个目录
+            def _delete_sync():
+                shutil.rmtree(source_path)
+                return True
+            
+            # 使用 asyncio.to_thread 将同步删除操作包装成异步
+            await asyncio.to_thread(_delete_sync)
+            logger.info(f"🗑️ 已异步删除成功发布的帖子目录: {source_path}")
+            
+            # 从available_posts中移除该帖子
+            self.available_posts = [
+                post for post in self.available_posts 
+                if post.get("source_dir") != source_dir
+            ]
+            logger.info(f"📊 已更新可用帖子列表，剩余 {len(self.available_posts)} 个")
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ 异步删除帖子目录失败 {source_path}: {e}")
+            return False
+    
+    def _schedule_delete_post_directory(self, post_data: Dict[str, Any]) -> None:
+        """
+        调度异步删除帖子目录任务（不阻塞主流程）
+        
+        Args:
+            post_data: 包含source_dir信息的帖子数据
+        """
+        async def _delete_task():
+            try:
+                success = await self._delete_post_directory_async(post_data)
+                if success:
+                    logger.info(f"🗑️ 后台删除成功: {post_data.get('title', '未知')}")
+                else:
+                    logger.warning(f"⚠️ 后台删除失败: {post_data.get('title', '未知')}")
+            except Exception as e:
+                logger.error(f"❌ 后台删除任务异常: {e}")
+        
+        # 创建后台任务，不等待完成
+        asyncio.create_task(_delete_task())
     
     async def _load_cookies(self) -> bool:
         """加载cookies到浏览器"""
@@ -656,6 +725,10 @@ class XiaohongshuAgent:
                 actual_success = True
                 success_reason = "Agent执行结果包含成功指标" if is_success else "URL包含published=true参数"
                 logger.info(f"✅ 发布成功，{success_reason}: {final_result_str}")
+                
+                # 🔧 新增：发布成功后异步删除帖子目录，防止重复发布（不阻塞主流程）
+                self._schedule_delete_post_directory(post_data)
+                logger.info(f"🗑️ 已调度删除任务: {post_data['title']}")
             else:
                 # 如果没有明确指标，基于任务是否正常完成来判断
                 # 检查是否因为达到最大步数而终止
@@ -665,6 +738,10 @@ class XiaohongshuAgent:
                 else:
                     actual_success = True
                     logger.info(f"✅ 发布完成: {final_result_str}")
+                    
+                    # 🔧 新增：发布成功后异步删除帖子目录，防止重复发布（不阻塞主流程）
+                    self._schedule_delete_post_directory(post_data)
+                    logger.info(f"🗑️ 已调度删除任务: {post_data['title']}")
             
             return {
                 "success": actual_success,  # 🔧 修复: 使用实际的成功判断
@@ -778,15 +855,9 @@ class XiaohongshuAgent:
                         consecutive_failures = 0  # 重置失败计数
                         logger.info(f"✅ 第 {i} 篇帖子发布成功: {title}")
                         
-                        # 等待一段时间再发布下一篇
+                        # 直接继续下一篇，不等待
                         if i < len(posts_to_publish) and not self.stop_requested:
-                            wait_time = 10
-                            logger.info(f"⏱️ 等待 {wait_time} 秒后继续...")
-                            
-                            for _ in range(wait_time):
-                                if self.stop_requested:
-                                    break
-                                await asyncio.sleep(1)
+                            logger.info("🚀 继续发布下一篇帖子...")
                     else:
                         consecutive_failures += 1
                         logger.error(f"❌ 第 {i} 篇帖子发布失败: {title}")
