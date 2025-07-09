@@ -54,6 +54,7 @@ def create_ui(theme_name="Ocean"):
     """
 
     ui_manager = WebuiManager()
+    ui_manager.init_xiaohongshu_agent()
 
     with gr.Blocks(
             title="小红书自动发帖工具", theme=theme_map[theme_name], css=css, js=js_func,

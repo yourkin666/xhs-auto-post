@@ -41,7 +41,54 @@ class WebuiManager:
         self.bu_current_task: Optional[asyncio.Task] = None
         self.bu_agent_task_id: Optional[str] = None
 
+    def init_xiaohongshu_agent(self) -> None:
+        """
+        init xiaohongshu agent
+        """
+        self.xiaohongshu_agent: Optional[object] = None
+        self.xiaohongshu_current_task: Optional[asyncio.Task] = None
+        self.xiaohongshu_agent_task_id: Optional[str] = None
 
+    def set_xiaohongshu_agent(self, agent: object) -> None:
+        """
+        Set xiaohongshu agent instance
+        """
+        self.xiaohongshu_agent = agent
+
+    def set_xiaohongshu_task(self, task: asyncio.Task) -> None:
+        """
+        Set xiaohongshu current task
+        """
+        self.xiaohongshu_current_task = task
+
+    async def stop_xiaohongshu_task(self) -> None:
+        """
+        Stop xiaohongshu current task
+        """
+        logger = __import__('logging').getLogger(__name__)
+        
+        # 1. 设置停止标志
+        if self.xiaohongshu_agent and hasattr(self.xiaohongshu_agent, 'request_stop'):
+            self.xiaohongshu_agent.request_stop()
+            logger.info("🛑 已设置停止标志")
+        
+        # 2. 强制关闭浏览器（这是关键！）
+        if self.xiaohongshu_agent and hasattr(self.xiaohongshu_agent, 'close_browser'):
+            try:
+                await self.xiaohongshu_agent.close_browser()
+                logger.info("🛑 已强制关闭浏览器")
+            except Exception as e:
+                logger.warning(f"⚠️ 关闭浏览器时出错: {e}")
+        
+        # 3. 取消正在运行的任务
+        if self.xiaohongshu_current_task and not self.xiaohongshu_current_task.done():
+            self.xiaohongshu_current_task.cancel()
+            logger.info("🛑 已取消正在运行的任务")
+            
+        # 4. 清理任务状态
+        self.xiaohongshu_current_task = None
+        
+        logger.info("🛑 小红书任务停止完成")
 
     def add_components(self, tab_name: str, components_dict: dict[str, "Component"]) -> None:
         """

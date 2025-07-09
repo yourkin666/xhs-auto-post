@@ -88,6 +88,11 @@ class XiaohongshuAgent:
         if self.browser is not None:
             return
             
+        # 🔧 关键修复：如果已经请求停止，不允许重新创建浏览器
+        if self.stop_requested:
+            logger.info("🛑 任务已停止，不允许重新创建浏览器")
+            return
+            
         # 使用优化的配置
         optimized_config = XiaohongshuLoginConfig.get_browser_config()
         
@@ -454,7 +459,17 @@ class XiaohongshuAgent:
     async def login_xiaohongshu(self) -> bool:
         """登录小红书"""
         try:
+            # 🔧 关键修复：检查停止状态
+            if self.stop_requested:
+                logger.info("🛑 任务已停止，跳过登录")
+                return False
+                
             await self.setup_browser()
+            
+            # 🔧 关键修复：setup_browser后再次检查停止状态
+            if self.stop_requested:
+                logger.info("🛑 任务已停止，跳过登录")
+                return False
             
             # 优先使用cookie登录
             if self.use_cookie_login:
@@ -513,7 +528,19 @@ class XiaohongshuAgent:
                 controller=controller,
             )
             
-            result = await browser_agent.run(max_steps=15)
+            try:
+                result = await browser_agent.run(max_steps=15)
+            except (asyncio.CancelledError, Exception) as e:
+                # 处理任务被取消或浏览器被关闭的情况
+                if self.stop_requested:
+                    logger.info("🛑 登录过程被停止请求中断")
+                    return False
+                elif "browser" in str(e).lower() or "context" in str(e).lower() or "connection" in str(e).lower():
+                    logger.info("🛑 登录过程因浏览器关闭而中断")
+                    return False
+                else:
+                    logger.warning(f"登录过程出现异常: {e}")
+                    return False
             
             # 改进登录成功检查逻辑
             final_result = result.final_result()
@@ -546,6 +573,10 @@ class XiaohongshuAgent:
     async def verify_login_status(self) -> bool:
         """验证登录状态"""
         try:
+            # 🔧 关键修复：检查停止状态
+            if self.stop_requested:
+                logger.info("🛑 任务已停止，跳过验证登录状态")
+                return False
             verify_task = """
             请检查当前是否已登录小红书：
             1. 查看页面右上角是否有用户头像或用户名
@@ -569,7 +600,20 @@ class XiaohongshuAgent:
                 controller=controller,
             )
             
-            result = await browser_agent.run(max_steps=5)
+            try:
+                result = await browser_agent.run(max_steps=5)
+            except (asyncio.CancelledError, Exception) as e:
+                # 处理任务被取消或浏览器被关闭的情况
+                if self.stop_requested:
+                    logger.info("🛑 验证登录状态被停止请求中断")
+                    return False
+                elif "browser" in str(e).lower() or "context" in str(e).lower() or "connection" in str(e).lower():
+                    logger.info("🛑 验证登录状态因浏览器关闭而中断")
+                    return False
+                else:
+                    logger.warning(f"验证登录状态出现异常: {e}")
+                    return False
+            
             final_result = str(result.final_result()).lower()
             
             if "已登录" in final_result or "logged in" in final_result:
@@ -586,6 +630,16 @@ class XiaohongshuAgent:
     async def post_to_xiaohongshu(self, post_data: Dict[str, Any]) -> Dict[str, Any]:
         """发布到小红书"""
         try:
+            # 🔧 关键修复：检查停止状态
+            if self.stop_requested:
+                logger.info("🛑 任务已停止，跳过发布")
+                return {
+                    "success": False,
+                    "error": "任务被用户停止",
+                    "post_title": post_data.get("title", "未知"),
+                    "message": "发布过程被用户停止",
+                    "analysis": {"decision_reason": "用户停止任务"}
+                }
             # 准备发帖内容
             content = self.create_post_content(post_data)
             images = post_data.get("images", [])
@@ -692,7 +746,38 @@ class XiaohongshuAgent:
                 available_file_paths=available_file_paths,  # 🔧 关键修复：提供文件路径
             )
             
-            result = await browser_agent.run(max_steps=20)
+            try:
+                result = await browser_agent.run(max_steps=20)
+            except (asyncio.CancelledError, Exception) as e:
+                # 处理任务被取消或浏览器被关闭的情况
+                if self.stop_requested:
+                    logger.info("🛑 发布过程被停止请求中断")
+                    return {
+                        "success": False,
+                        "error": "任务被用户停止",
+                        "post_title": post_data.get("title", "未知"),
+                        "message": "发布过程被用户停止",
+                        "analysis": {"decision_reason": "用户停止任务"}
+                    }
+                elif "browser" in str(e).lower() or "context" in str(e).lower() or "connection" in str(e).lower():
+                    logger.info("🛑 发布过程因浏览器关闭而中断")
+                    return {
+                        "success": False,
+                        "error": "浏览器连接中断",
+                        "post_title": post_data.get("title", "未知"),
+                        "message": "发布过程因浏览器关闭而中断",
+                        "analysis": {"decision_reason": "浏览器连接中断"}
+                    }
+                else:
+                    logger.warning(f"发布过程出现异常: {e}")
+                    return {
+                        "success": False,
+                        "error": str(e),
+                        "post_title": post_data.get("title", "未知"),
+                        "message": "发布过程出现异常",
+                        "analysis": {"decision_reason": "发布异常"}
+                    }
+            
             final_result = result.final_result()
             final_result_str = str(final_result).lower()
             
@@ -798,6 +883,10 @@ class XiaohongshuAgent:
             
             # 登录小红书
             logger.info("🔐 尝试登录小红书...")
+            
+            # 检查取消状态
+            await asyncio.sleep(0)
+            
             login_success = await self.login_xiaohongshu()
             if not login_success:
                 logger.error("❌ 登录失败")
@@ -807,6 +896,9 @@ class XiaohongshuAgent:
                     "message": "请检查网络连接和登录信息",
                     "timestamp": datetime.now().isoformat()
                 }]
+            
+            # 检查取消状态
+            await asyncio.sleep(0)
             
             logger.info("✅ 登录成功")
             
@@ -824,11 +916,21 @@ class XiaohongshuAgent:
                     logger.info(f"🛑 接收到停止信号，已完成 {post_count}/{len(posts_to_publish)} 条内容")
                     break
                 
+                # 检查当前任务是否被取消
+                current_task = asyncio.current_task()
+                if current_task and current_task.cancelled():
+                    logger.info(f"🛑 任务被取消，已完成 {post_count}/{len(posts_to_publish)} 条内容")
+                    raise asyncio.CancelledError()
+                
                 while self.is_paused:
                     logger.info("⏸️ 任务已暂停，等待恢复...")
                     await asyncio.sleep(1)
                     if self.stop_requested:
                         break
+                    # 检查任务是否被取消
+                    if current_task and current_task.cancelled():
+                        logger.info("🛑 任务在暂停期间被取消")
+                        raise asyncio.CancelledError()
                 
                 if self.stop_requested:
                     break
@@ -840,6 +942,9 @@ class XiaohongshuAgent:
                 
                 title = post_data.get('title', 'untitled')
                 logger.info(f"📤 发布第 {i}/{len(posts_to_publish)} 篇帖子: {title}")
+                
+                # 检查取消状态
+                await asyncio.sleep(0)
                 
                 try:
                     result = await self.post_to_xiaohongshu(post_data)
@@ -870,6 +975,11 @@ class XiaohongshuAgent:
                             for _ in range(wait_time):
                                 if self.stop_requested:
                                     break
+                                # 检查任务是否被取消
+                                current_task = asyncio.current_task()
+                                if current_task and current_task.cancelled():
+                                    logger.info("🛑 任务在等待期间被取消")
+                                    raise asyncio.CancelledError()
                                 await asyncio.sleep(1)
                 
                 except Exception as e:

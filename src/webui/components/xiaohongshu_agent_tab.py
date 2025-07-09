@@ -162,12 +162,28 @@ async def run_xiaohongshu_task(
             browser_config=browser_config,
         )
         
+        # 将agent实例保存到webui_manager
+        webui_manager.set_xiaohongshu_agent(xiaohongshu_agent)
+        
         # 运行发帖任务
         yield {
             output_comp: gr.update(value="📱 正在启动小红书发帖..."),
         }
         
-        results = await xiaohongshu_agent.run_posting_task(max_posts=max_posts)
+        # 创建任务并保存到webui_manager
+        task = asyncio.create_task(xiaohongshu_agent.run_posting_task(max_posts=max_posts))
+        webui_manager.set_xiaohongshu_task(task)
+        
+        try:
+            results = await task
+        except asyncio.CancelledError:
+            logger.info("🛑 小红书发帖任务已被取消")
+            yield {
+                output_comp: gr.update(value="⏹️ 小红书发帖任务已被用户停止"),
+                start_button_comp: gr.update(value="🚀 开始发帖", interactive=True),
+                stop_button_comp: gr.update(interactive=False),
+            }
+            return
         
         # 格式化结果
         output_text = "📊 小红书发帖任务完成\n\n"
@@ -203,6 +219,9 @@ async def run_xiaohongshu_task(
             start_button_comp: gr.update(value="🚀 开始发帖", interactive=True),
             stop_button_comp: gr.update(interactive=False),
         }
+    finally:
+        # 清理任务状态
+        webui_manager.xiaohongshu_current_task = None
 
 
 async def stop_xiaohongshu_task(webui_manager: WebuiManager) -> Dict[Component, Any]:
@@ -212,14 +231,23 @@ async def stop_xiaohongshu_task(webui_manager: WebuiManager) -> Dict[Component, 
     stop_button_comp = webui_manager.get_component_by_id("xiaohongshu_agent.stop_button")
     output_comp = webui_manager.get_component_by_id("xiaohongshu_agent.output")
     
-    # 这里可以添加停止逻辑
-    logger.info("小红书发帖任务已停止")
-    
-    return {
-        output_comp: gr.update(value="⏹️ 小红书发帖任务已停止"),
-        start_button_comp: gr.update(value="🚀 开始发帖", interactive=True),
-        stop_button_comp: gr.update(interactive=False),
-    }
+    # 真正停止任务
+    try:
+        await webui_manager.stop_xiaohongshu_task()
+        logger.info("🛑 小红书发帖任务已停止")
+        
+        return {
+            output_comp: gr.update(value="⏹️ 小红书发帖任务已停止"),
+            start_button_comp: gr.update(value="🚀 开始发帖", interactive=True),
+            stop_button_comp: gr.update(interactive=False),
+        }
+    except Exception as e:
+        logger.error(f"停止小红书发帖任务失败: {e}")
+        return {
+            output_comp: gr.update(value=f"❌ 停止任务失败: {str(e)}"),
+            start_button_comp: gr.update(value="🚀 开始发帖", interactive=True),
+            stop_button_comp: gr.update(interactive=False),
+        }
 
 
 def refresh_posts_content() -> str:
