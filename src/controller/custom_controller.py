@@ -71,7 +71,7 @@ class CustomController(Controller):
                                     include_in_memory=True)
 
         @self.registry.action(
-            'Upload file to interactive element with file path ',
+            'Upload file to interactive element with file path and verify upload completion',
         )
         async def upload_file(index: int, path: str, browser: BrowserContext, available_file_paths: list[str]):
             if path not in available_file_paths:
@@ -79,6 +79,14 @@ class CustomController(Controller):
 
             if not os.path.exists(path):
                 return ActionResult(error=f'File {path} does not exist')
+
+            # 获取上传前的页面状态
+            try:
+                page = await browser.get_current_page()
+                initial_page_content = await page.content()
+            except Exception as e:
+                logger.warning(f"无法获取初始页面内容: {e}")
+                initial_page_content = ""
 
             dom_el = await browser.get_dom_element_by_index(index)
 
@@ -97,12 +105,71 @@ class CustomController(Controller):
                 return ActionResult(error=msg)
 
             try:
+                # 第1步：设置文件
                 await file_upload_el.set_input_files(path)
-                msg = f'Successfully uploaded file to index {index}'
-                logger.info(msg)
-                return ActionResult(extracted_content=msg, include_in_memory=True)
+                logger.info(f"文件已设置到input元素: {path}")
+                
+                # 第2步：等待一段时间让上传开始
+                await asyncio.sleep(2)
+                
+                # 第3步：检查页面是否发生变化（最多等待10秒）
+                upload_success = False
+                max_wait_time = 10
+                check_interval = 1
+                waited_time = 0
+                
+                while waited_time < max_wait_time and not upload_success:
+                    await asyncio.sleep(check_interval)
+                    waited_time += check_interval
+                    
+                    try:
+                        page = await browser.get_current_page()
+                        current_page_content = await page.content()
+                        
+                        # 检查页面变化的多个指标
+                        success_indicators = [
+                            "上传成功",
+                            "preview",
+                            "预览",
+                            "编辑",
+                            "标题",
+                            "描述",
+                            "发布",
+                            "img",  # 图片预览
+                            "thumbnail",  # 缩略图
+                        ]
+                        
+                        # 检查是否出现了上传成功的指标
+                        for indicator in success_indicators:
+                            if indicator in current_page_content.lower() and indicator not in initial_page_content.lower():
+                                upload_success = True
+                                logger.info(f"检测到上传成功指标: {indicator}")
+                                break
+                        
+                        # 检查是否还在显示"拖拽图片到此"（说明还在上传界面）
+                        if "拖拽图片到此" in current_page_content or "点击上传" in current_page_content:
+                            logger.info(f"仍在上传界面，继续等待... ({waited_time}s)")
+                        else:
+                            # 页面已经改变，可能是进入了编辑界面
+                            upload_success = True
+                            logger.info("页面已离开上传界面，可能上传成功")
+                            break
+                            
+                    except Exception as e:
+                        logger.warning(f"检查页面状态时出错: {e}")
+                        continue
+                
+                if upload_success:
+                    msg = f'文件上传成功并已进入编辑界面: {path}'
+                    logger.info(msg)
+                    return ActionResult(extracted_content=msg, include_in_memory=True)
+                else:
+                    msg = f'文件设置成功但上传可能未完成，页面未发生预期变化: {path}'
+                    logger.warning(msg)
+                    return ActionResult(error=msg)
+                    
             except Exception as e:
-                msg = f'Failed to upload file to index {index}: {str(e)}'
+                msg = f'上传文件时出错 index {index}: {str(e)}'
                 logger.info(msg)
                 return ActionResult(error=msg)
 
