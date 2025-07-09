@@ -855,14 +855,20 @@ class XiaohongshuAgent:
             }
     
     @time_execution_async("--run (xiaohongshu_agent)")
-    async def run_posting_task(self, max_posts: int = 5) -> List[Dict[str, Any]]:
+    async def run_posting_task(self, max_posts: int = 5, status_callback=None) -> List[Dict[str, Any]]:
         """运行发帖任务，模仿browser_use_agent的执行控制流"""
         self.current_task_id = str(uuid.uuid4())
         results = []
         self.is_running = True
         
+        async def update_status(message: str, details: Dict[str, Any] = None):
+            """更新状态的辅助函数"""
+            if status_callback:
+                await status_callback(message, details or {})
+        
         try:
             logger.info("🚀 开始小红书发帖任务...")
+            await update_status("🚀 开始小红书发帖任务...")
             
             # 检查停止信号
             if self.stop_requested:
@@ -870,10 +876,14 @@ class XiaohongshuAgent:
                 return results
             
             # 使用动态扫描的内容或重新扫描
+            await update_status("📂 扫描发帖内容...")
             posts = self.available_posts or self._scan_available_posts()
             
             if not posts:
                 logger.warning("⚠️ 未找到发帖内容")
+                await update_status("❌ 未找到发帖内容", {
+                    "message": "请在tmp目录下放置文案文件(.txt/.md)和图片文件"
+                })
                 return [{
                     "success": False,
                     "error": "没有找到可发布的内容",
@@ -883,6 +893,7 @@ class XiaohongshuAgent:
             
             # 登录小红书
             logger.info("🔐 尝试登录小红书...")
+            await update_status("🔐 正在登录小红书...")
             
             # 检查取消状态
             await asyncio.sleep(0)
@@ -890,6 +901,9 @@ class XiaohongshuAgent:
             login_success = await self.login_xiaohongshu()
             if not login_success:
                 logger.error("❌ 登录失败")
+                await update_status("❌ 小红书登录失败", {
+                    "message": "请检查网络连接和登录信息"
+                })
                 return [{
                     "success": False,
                     "error": "小红书登录失败",
@@ -901,10 +915,15 @@ class XiaohongshuAgent:
             await asyncio.sleep(0)
             
             logger.info("✅ 登录成功")
+            await update_status("✅ 登录成功，准备发布帖子...")
             
             # 发布帖子
             posts_to_publish = posts[:max_posts]
             logger.info(f"📝 准备发布 {len(posts_to_publish)} 条内容")
+            await update_status(f"📝 准备发布 {len(posts_to_publish)} 条内容", {
+                "total_posts": len(posts_to_publish),
+                "current_post": 0
+            })
             
             consecutive_failures = 0
             max_failures = 3
@@ -938,15 +957,38 @@ class XiaohongshuAgent:
                 # 检查连续失败次数
                 if consecutive_failures >= max_failures:
                     logger.error(f"❌ 连续失败 {max_failures} 次，停止任务")
+                    await update_status(f"❌ 连续失败 {max_failures} 次，停止任务", {
+                        "current_post": i,
+                        "total_posts": len(posts_to_publish),
+                        "failed_count": consecutive_failures
+                    })
                     break
                 
                 title = post_data.get('title', 'untitled')
                 logger.info(f"📤 发布第 {i}/{len(posts_to_publish)} 篇帖子: {title}")
                 
+                # 实时更新当前发布状态
+                await update_status(f"📤 正在发布第 {i}/{len(posts_to_publish)} 篇帖子", {
+                    "current_post": i,
+                    "total_posts": len(posts_to_publish),
+                    "post_title": title,
+                    "post_content_length": len(post_data.get('text_content', '')),
+                    "post_images_count": len(post_data.get('images', [])),
+                    "status": "准备发布"
+                })
+                
                 # 检查取消状态
                 await asyncio.sleep(0)
                 
                 try:
+                    # 发布开始
+                    await update_status(f"📤 正在发布: {title}", {
+                        "current_post": i,
+                        "total_posts": len(posts_to_publish),
+                        "post_title": title,
+                        "status": "发布中"
+                    })
+                    
                     result = await self.post_to_xiaohongshu(post_data)
                     result.update({
                         "step_number": i,
@@ -960,6 +1002,16 @@ class XiaohongshuAgent:
                         consecutive_failures = 0  # 重置失败计数
                         logger.info(f"✅ 第 {i} 篇帖子发布成功: {title}")
                         
+                        # 实时更新成功状态
+                        await update_status(f"✅ 第 {i} 篇帖子发布成功: {title}", {
+                            "current_post": i,
+                            "total_posts": len(posts_to_publish),
+                            "post_title": title,
+                            "status": "发布成功",
+                            "success_count": post_count,
+                            "failed_count": len(results) - post_count
+                        })
+                        
                         # 直接继续下一篇，不等待
                         if i < len(posts_to_publish) and not self.stop_requested:
                             logger.info("🚀 继续发布下一篇帖子...")
@@ -967,12 +1019,24 @@ class XiaohongshuAgent:
                         consecutive_failures += 1
                         logger.error(f"❌ 第 {i} 篇帖子发布失败: {title}")
                         
+                        # 实时更新失败状态
+                        error_msg = result.get('error', '未知错误')
+                        await update_status(f"❌ 第 {i} 篇帖子发布失败: {title}", {
+                            "current_post": i,
+                            "total_posts": len(posts_to_publish),
+                            "post_title": title,
+                            "status": "发布失败",
+                            "error": error_msg,
+                            "success_count": post_count,
+                            "failed_count": len(results) - post_count
+                        })
+                        
                         # 失败后等待更长时间
                         if i < len(posts_to_publish) and not self.stop_requested:
                             wait_time = 5 + (consecutive_failures * 3)
                             logger.info(f"⏱️ 发布失败，等待 {wait_time} 秒后重试...")
                             
-                            for _ in range(wait_time):
+                            for wait_sec in range(wait_time):
                                 if self.stop_requested:
                                     break
                                 # 检查任务是否被取消
@@ -980,6 +1044,16 @@ class XiaohongshuAgent:
                                 if current_task and current_task.cancelled():
                                     logger.info("🛑 任务在等待期间被取消")
                                     raise asyncio.CancelledError()
+                                
+                                # 实时更新等待状态
+                                await update_status(f"⏱️ 发布失败，等待 {wait_time - wait_sec} 秒后重试", {
+                                    "current_post": i,
+                                    "total_posts": len(posts_to_publish),
+                                    "post_title": title,
+                                    "status": "等待重试",
+                                    "wait_time": wait_time - wait_sec
+                                })
+                                
                                 await asyncio.sleep(1)
                 
                 except Exception as e:
@@ -994,6 +1068,17 @@ class XiaohongshuAgent:
                     }
                     results.append(error_result)
                     logger.error(f"💥 第 {i} 篇帖子发布异常: {e}")
+                    
+                    # 实时更新异常状态
+                    await update_status(f"💥 第 {i} 篇帖子发布异常: {title}", {
+                        "current_post": i,
+                        "total_posts": len(posts_to_publish),
+                        "post_title": title,
+                        "status": "发布异常",
+                        "error": str(e),
+                        "success_count": post_count,
+                        "failed_count": len(results) - post_count
+                    })
             
             # 任务完成统计
             successful_posts = sum(1 for r in results if r.get('success'))
@@ -1001,8 +1086,18 @@ class XiaohongshuAgent:
             
             if self.stop_requested:
                 logger.info(f"🛑 任务被中断，已完成 {successful_posts}/{total_attempts} 条内容")
+                await update_status(f"🛑 任务被中断", {
+                    "success_count": successful_posts,
+                    "total_attempts": total_attempts,
+                    "status": "任务中断"
+                })
             else:
                 logger.info(f"🎉 发帖任务完成！成功发布 {successful_posts}/{total_attempts} 条内容")
+                await update_status(f"🎉 发帖任务完成！", {
+                    "success_count": successful_posts,
+                    "total_attempts": total_attempts,
+                    "status": "任务完成"
+                })
     
         except KeyboardInterrupt:
             logger.info("⌨️ 接收到键盘中断，优雅停止任务")

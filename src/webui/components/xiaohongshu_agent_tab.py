@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import os
+from datetime import datetime
 from functools import partial
 from pathlib import Path
 from typing import Any, AsyncGenerator, Dict, List, Optional
@@ -170,44 +171,131 @@ async def run_xiaohongshu_task(
             output_comp: gr.update(value="📱 正在启动小红书发帖..."),
         }
         
+        # 创建实时状态回调函数
+        status_messages = ["📱 正在启动小红书发帖..."]
+        status_update_queue = asyncio.Queue()
+        
+        async def status_callback(message: str, details: Dict[str, Any] = None):
+            """处理实时状态更新的回调函数"""
+            # 构建详细的状态信息
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            status_line = f"[{timestamp}] {message}"
+            
+            # 如果有详细信息，添加到状态行
+            if details:
+                if details.get('current_post') and details.get('total_posts'):
+                    status_line += f" ({details['current_post']}/{details['total_posts']})"
+                
+                # 显示成功/失败统计
+                if details.get('success_count') is not None and details.get('failed_count') is not None:
+                    status_line += f" [成功: {details['success_count']}, 失败: {details['failed_count']}]"
+                
+                # 显示等待时间
+                if details.get('wait_time'):
+                    status_line += f" (等待 {details['wait_time']} 秒)"
+                
+                # 显示错误信息
+                if details.get('error'):
+                    error_msg = details['error']
+                    if len(error_msg) > 100:
+                        error_msg = error_msg[:100] + "..."
+                    status_line += f"\n    错误: {error_msg}"
+            
+            # 构建完整的输出文本
+            output_text = status_line
+            
+            # 如果是发布过程中的状态，添加额外的帖子信息
+            if details and details.get('post_title'):
+                current_post_info = f"\n\n📝 当前帖子: {details['post_title']}"
+                if details.get('post_content_length'):
+                    current_post_info += f"\n📄 文案长度: {details['post_content_length']} 字"
+                if details.get('post_images_count'):
+                    current_post_info += f"\n🖼️ 图片数量: {details['post_images_count']} 张"
+                if details.get('status'):
+                    current_post_info += f"\n📊 状态: {details['status']}"
+                
+                output_text += current_post_info
+            
+            # 将更新放入队列
+            await status_update_queue.put((status_line, output_text))
+        
         # 创建任务并保存到webui_manager
-        task = asyncio.create_task(xiaohongshu_agent.run_posting_task(max_posts=max_posts))
+        task = asyncio.create_task(xiaohongshu_agent.run_posting_task(max_posts=max_posts, status_callback=status_callback))
         webui_manager.set_xiaohongshu_task(task)
         
+        # 实时处理状态更新
+        while not task.done():
+            try:
+                # 等待状态更新，超时时间为0.5秒
+                status_line, full_output = await asyncio.wait_for(status_update_queue.get(), timeout=0.5)
+                
+                # 添加到状态消息列表
+                status_messages.append(status_line)
+                
+                # 保留最新的50条消息，防止界面过于臃肿
+                if len(status_messages) > 50:
+                    status_messages = status_messages[-50:]
+                
+                # 构建完整的输出文本
+                output_text = "\n".join(status_messages)
+                
+                # 如果有当前帖子信息，追加到输出
+                if "📝 当前帖子:" in full_output:
+                    current_post_info = "\n" + full_output.split("\n\n")[-1]
+                    output_text += current_post_info
+                
+                # 实时更新界面
+                yield {
+                    output_comp: gr.update(value=output_text),
+                }
+                
+            except asyncio.TimeoutError:
+                # 没有新的状态更新，继续等待
+                continue
+            except Exception as e:
+                logger.error(f"处理状态更新时出错: {e}")
+                continue
+        
+        # 任务完成后处理结果
         try:
             results = await task
         except asyncio.CancelledError:
             logger.info("🛑 小红书发帖任务已被取消")
+            status_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] ⏹️ 小红书发帖任务已被用户停止")
             yield {
-                output_comp: gr.update(value="⏹️ 小红书发帖任务已被用户停止"),
+                output_comp: gr.update(value="\n".join(status_messages)),
                 start_button_comp: gr.update(value="🚀 开始发帖", interactive=True),
                 stop_button_comp: gr.update(interactive=False),
             }
             return
         
-        # 格式化结果
-        output_text = "📊 小红书发帖任务完成\n\n"
-        success_count = sum(1 for r in results if r.get("success", False))
-        output_text += f"✅ 成功发布: {success_count} 篇\n"
-        output_text += f"❌ 失败: {len(results) - success_count} 篇\n\n"
+        # 格式化最终结果
+        final_status = f"[{datetime.now().strftime('%H:%M:%S')}] 📊 小红书发帖任务完成"
+        status_messages.append(final_status)
         
-        output_text += "详细结果:\n"
+        success_count = sum(1 for r in results if r.get("success", False))
+        summary_line = f"[{datetime.now().strftime('%H:%M:%S')}] ✅ 成功发布: {success_count} 篇，❌ 失败: {len(results) - success_count} 篇"
+        status_messages.append(summary_line)
+        
+        # 添加详细结果
+        status_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] 📋 详细结果:")
         for i, result in enumerate(results, 1):
             if result.get("success", False):
-                output_text += f"{i}. ✅ {result.get('post_title', '未知')}\n"
-                output_text += f"   内容长度: {len(result.get('content', ''))}\n"
-                output_text += f"   图片数量: {result.get('images_count', 0)}\n"
+                detail_line = f"  {i}. ✅ {result.get('post_title', '未知')} (内容: {len(result.get('content', ''))}字, 图片: {result.get('images_count', 0)}张)"
+                status_messages.append(detail_line)
             else:
-                output_text += f"{i}. ❌ {result.get('post_title', '未知')}\n"
                 error_msg = result.get('error', result.get('message', '未知错误'))
-                output_text += f"   错误: {error_msg}\n"
+                detail_line = f"  {i}. ❌ {result.get('post_title', '未知')} - 错误: {error_msg}"
+                status_messages.append(detail_line)
                 # 如果是缺少图片的错误，特别标注
                 if "不支持发布纯文字帖子" in error_msg:
-                    output_text += f"   💡 提示: 请在帖子目录中添加图片文件\n"
-            output_text += "\n"
+                    status_messages.append(f"     💡 提示: 请在帖子目录中添加图片文件")
+        
+        # 构建最终输出
+        final_output = "\n".join(status_messages)
         
         yield {
-            output_comp: gr.update(value=output_text),
+            output_comp: gr.update(value=final_output),
             start_button_comp: gr.update(value="🚀 开始发帖", interactive=True),
             stop_button_comp: gr.update(interactive=False),
         }
