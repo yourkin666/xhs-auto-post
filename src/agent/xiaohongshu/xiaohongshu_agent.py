@@ -672,9 +672,17 @@ class XiaohongshuAgent:
                 1. 访问小红书网站
                 2. 登录（如果需要）
                 3. 点击发布按钮
-                4. 选择"上传图文"
+                4. **关键步骤：选择"上传图文"** 
+                   - 必须找到并点击"图文"、"上传图文"或类似的按钮
+                   - 确保不是在视频上传界面
+                   - 必须确认已进入图文上传页面，通常会看到"拖拽图片到此"或"点击上传图片"的提示
+                   - 如果看到"视频"相关的界面，说明选择错误，需要重新选择图文
                 5. **图片上传**（关键步骤）：
                    图片文件: {image_paths[0] if image_paths else '无'}
+                   
+                   **上传前检查**：
+                   - 确认当前在图文上传页面（不是视频上传页面）
+                   - 确认页面显示"拖拽图片到此"或"点击上传图片"
                    
                    **上传步骤**：
                    - 找到文件输入元素
@@ -697,8 +705,10 @@ class XiaohongshuAgent:
                 - **绝对不要点击"添加话题"按钮**
                 - **绝对不要尝试单独添加标签**
                 - **所有标签已经包含在正文中**
+                - **不要在视频上传界面上传图片**
 
                 成功标准：
+                - 首先成功选择图文上传模式
                 - 使用upload_file动作成功上传1张图片
                 - **必须确认页面显示图片预览且进入编辑界面**
                 - 标题和正文完整填写
@@ -706,11 +716,15 @@ class XiaohongshuAgent:
                 - 看到发布成功提示或URL包含"published=true"参数
 
                 **关键问题处理指南**：
+                - **如果遇到"你访问的页面不见了"错误**：立即刷新页面或重新访问小红书创作平台
+                - **如果页面空白或加载失败**：等待5秒后刷新页面，或者重新导航到创作平台
+                - **如果在视频上传界面**：立即返回或重新选择图文上传
                 - **如果upload_file报告成功但页面仍显示"拖拽图片到此"**：说明上传实际失败，必须重新上传
                 - **如果找不到标题和描述输入框**：检查图片是否真正上传成功，可能需要重新上传
                 - **页面卡在上传界面**：确认图片是否上传成功，重新选择文件或刷新页面重试
                 - **找不到发布按钮**：检查URL是否包含"published=true"，可能已发布成功
                 - **出现弹窗或错误**：尝试关闭弹窗或按ESC键，然后继续
+                - **网络连接问题**：等待几秒后重试，或者刷新页面重新开始
                 """
             else:
                 # 小红书不支持无图片发布，直接返回错误
@@ -799,6 +813,13 @@ class XiaohongshuAgent:
                 "failed to complete", "maximum steps", "无法", "不能"
             ]
             
+            # 🔧 新增：检查需要重试的错误
+            retry_indicators = [
+                "你访问的页面不见了", "页面不见了", "page not found", "404", 
+                "网络错误", "network error", "连接失败", "connection failed",
+                "页面加载失败", "page load failed", "空白页面", "blank page"
+            ]
+            
             # 检查成功指标（包括URL和结果中的成功信息）
             is_success = any(indicator in final_result_str for indicator in success_indicators)
             
@@ -809,8 +830,31 @@ class XiaohongshuAgent:
             # 检查失败指标
             has_failure = any(indicator in final_result_str for indicator in failure_indicators)
             
-            # 🔧 综合判断：结合明确的成功/失败指标和URL检查
-            if has_failure and not (is_success or url_success):
+            # 🔧 新增：检查是否需要重试
+            needs_retry = any(indicator in final_result_str for indicator in retry_indicators)
+            
+            # 🔧 综合判断：结合明确的成功/失败指标、URL检查和重试判断
+            if needs_retry and not (is_success or url_success):
+                # 需要重试的情况，返回特殊的错误类型
+                logger.warning(f"⚠️ 检测到需要重试的错误: {final_result_str}")
+                return {
+                    "success": False,
+                    "error": "页面错误，需要重试",
+                    "post_title": post_data["title"],
+                    "content": content,
+                    "images_count": len(images),
+                    "result": str(final_result),
+                    "retry_needed": True,  # 标记需要重试
+                    "analysis": {
+                        "final_result": final_result_str,
+                        "has_success_indicators": is_success,
+                        "has_failure_indicators": has_failure,
+                        "url_success": url_success,
+                        "needs_retry": needs_retry,
+                        "decision_reason": "检测到页面错误，建议重试"
+                    }
+                }
+            elif has_failure and not (is_success or url_success):
                 actual_success = False
                 logger.warning(f"❌ 发布失败，检测到失败指标: {final_result_str}")
             elif is_success or url_success:
@@ -846,6 +890,7 @@ class XiaohongshuAgent:
                     "has_success_indicators": is_success,
                     "has_failure_indicators": has_failure,
                     "url_success": url_success,
+                    "needs_retry": needs_retry,
                     "decision_reason": "基于Agent执行结果和URL状态的智能判断"
                 }
             }
@@ -864,6 +909,22 @@ class XiaohongshuAgent:
     @time_execution_async("--run (xiaohongshu_agent)")
     async def run_posting_task(self, max_posts: int = 5, status_callback=None) -> List[Dict[str, Any]]:
         """运行发帖任务，模仿browser_use_agent的执行控制流"""
+        
+        # 🔧 新增：确保开始时状态是干净的
+        logger.info("🔄 初始化发帖任务，检查状态...")
+        
+        # 如果之前有未完成的任务，先清理
+        if self.is_running or self.stop_requested:
+            logger.warning("⚠️ 检测到之前任务状态未清理，正在重置...")
+            await self.close_browser()
+            self.is_running = False
+            self.is_paused = False
+            self.stop_requested = False
+            self.browser = None
+            self.browser_context = None
+            self.controller = None
+            logger.info("✅ 状态已重置")
+        
         self.current_task_id = str(uuid.uuid4())
         results = []
         self.is_running = True
@@ -996,27 +1057,62 @@ class XiaohongshuAgent:
                         "status": "发布中"
                     })
                     
-                    result = await self.post_to_xiaohongshu(post_data)
+                    # 🔧 新增：添加重试机制
+                    max_retries = 2
+                    retry_count = 0
+                    result = None
+                    
+                    while retry_count <= max_retries:
+                        if self.stop_requested:
+                            break
+                            
+                        if retry_count > 0:
+                            logger.info(f"🔄 第 {retry_count} 次重试发布: {title}")
+                            await update_status(f"🔄 第 {retry_count} 次重试发布: {title}", {
+                                "current_post": i,
+                                "total_posts": len(posts_to_publish),
+                                "post_title": title,
+                                "status": f"第{retry_count}次重试",
+                                "retry_count": retry_count
+                            })
+                            
+                            # 重试前等待一段时间
+                            await asyncio.sleep(5)
+                        
+                        result = await self.post_to_xiaohongshu(post_data)
+                        
+                        # 检查是否需要重试
+                        if result.get("retry_needed", False) and retry_count < max_retries:
+                            retry_count += 1
+                            logger.warning(f"⚠️ 发布遇到可重试错误，准备第 {retry_count} 次重试: {result.get('error', '')}")
+                            continue
+                        else:
+                            # 不需要重试或已达到最大重试次数
+                            break
+                    
                     result.update({
                         "step_number": i,
                         "total_steps": len(posts_to_publish),
-                        "timestamp": datetime.now().isoformat()
+                        "timestamp": datetime.now().isoformat(),
+                        "retry_count": retry_count
                     })
                     results.append(result)
                     
                     if result["success"]:
                         post_count += 1
                         consecutive_failures = 0  # 重置失败计数
-                        logger.info(f"✅ 第 {i} 篇帖子发布成功: {title}")
+                        retry_msg = f" (经过 {retry_count} 次重试)" if retry_count > 0 else ""
+                        logger.info(f"✅ 第 {i} 篇帖子发布成功: {title}{retry_msg}")
                         
                         # 实时更新成功状态
-                        await update_status(f"✅ 第 {i} 篇帖子发布成功: {title}", {
+                        await update_status(f"✅ 第 {i} 篇帖子发布成功: {title}{retry_msg}", {
                             "current_post": i,
                             "total_posts": len(posts_to_publish),
                             "post_title": title,
                             "status": "发布成功",
                             "success_count": post_count,
-                            "failed_count": len(results) - post_count
+                            "failed_count": len(results) - post_count,
+                            "retry_count": retry_count
                         })
                         
                         # 直接继续下一篇，不等待
@@ -1024,18 +1120,20 @@ class XiaohongshuAgent:
                             logger.info("🚀 继续发布下一篇帖子...")
                     else:
                         consecutive_failures += 1
-                        logger.error(f"❌ 第 {i} 篇帖子发布失败: {title}")
+                        retry_msg = f" (已重试 {retry_count} 次)" if retry_count > 0 else ""
+                        logger.error(f"❌ 第 {i} 篇帖子发布失败: {title}{retry_msg}")
                         
                         # 实时更新失败状态
                         error_msg = result.get('error', '未知错误')
-                        await update_status(f"❌ 第 {i} 篇帖子发布失败: {title}", {
+                        await update_status(f"❌ 第 {i} 篇帖子发布失败: {title}{retry_msg}", {
                             "current_post": i,
                             "total_posts": len(posts_to_publish),
                             "post_title": title,
                             "status": "发布失败",
                             "error": error_msg,
                             "success_count": post_count,
-                            "failed_count": len(results) - post_count
+                            "failed_count": len(results) - post_count,
+                            "retry_count": retry_count
                         })
                         
                         # 失败后等待更长时间
@@ -1158,4 +1256,19 @@ class XiaohongshuAgent:
         logger.info("🛑 停止小红书发帖任务")
         self.request_stop()
         await self.close_browser()
-        self.current_task_id = None 
+        self.current_task_id = None
+        
+        # 🔧 关键修复：重置所有状态标志，确保下次可以重新开始
+        self.is_running = False
+        self.is_paused = False
+        self.stop_requested = False  # 重置停止请求状态
+        
+        # 🔧 新增：彻底清理所有组件状态
+        self.browser = None
+        self.browser_context = None
+        self.controller = None  # 重置控制器
+        
+        # 🔧 新增：重新扫描可用内容，确保内容列表是最新的
+        self.available_posts = self._scan_available_posts()
+        
+        logger.info("🔄 已完全重置Agent状态，所有组件已清理，可以重新开始任务") 

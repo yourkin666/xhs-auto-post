@@ -67,26 +67,25 @@ class WebuiManager:
         """
         logger = __import__('logging').getLogger(__name__)
         
-        # 1. 设置停止标志
-        if self.xiaohongshu_agent and hasattr(self.xiaohongshu_agent, 'request_stop'):
-            self.xiaohongshu_agent.request_stop()
-            logger.info("🛑 已设置停止标志")
-        
-        # 2. 强制关闭浏览器（这是关键！）
-        if self.xiaohongshu_agent and hasattr(self.xiaohongshu_agent, 'close_browser'):
-            try:
-                await self.xiaohongshu_agent.close_browser()
-                logger.info("🛑 已强制关闭浏览器")
-            except Exception as e:
-                logger.warning(f"⚠️ 关闭浏览器时出错: {e}")
-        
-        # 3. 取消正在运行的任务
+        # 1. 取消正在运行的任务
         if self.xiaohongshu_current_task and not self.xiaohongshu_current_task.done():
             self.xiaohongshu_current_task.cancel()
             logger.info("🛑 已取消正在运行的任务")
-            
-        # 4. 清理任务状态
+        
+        # 2. 调用Agent的stop方法进行完整的状态重置（关键修复）
+        if self.xiaohongshu_agent and hasattr(self.xiaohongshu_agent, 'stop'):
+            try:
+                await self.xiaohongshu_agent.stop()
+                logger.info("🛑 已调用Agent的stop方法，完成状态重置")
+            except Exception as e:
+                logger.warning(f"⚠️ 调用Agent stop方法时出错: {e}")
+        
+        # 3. 清理任务状态
         self.xiaohongshu_current_task = None
+        
+        # 4. 清理Agent实例引用
+        self.xiaohongshu_agent = None
+        logger.info("🛑 已清理Agent实例引用")
         
         logger.info("🛑 小红书任务停止完成")
 

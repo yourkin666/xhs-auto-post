@@ -310,6 +310,8 @@ async def run_xiaohongshu_task(
     finally:
         # 清理任务状态
         webui_manager.xiaohongshu_current_task = None
+        # 清理Agent实例引用（确保状态重置）
+        webui_manager.xiaohongshu_agent = None
 
 
 async def stop_xiaohongshu_task(webui_manager: WebuiManager) -> Dict[Component, Any]:

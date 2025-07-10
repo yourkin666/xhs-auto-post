@@ -84,6 +84,17 @@ class CustomController(Controller):
             try:
                 page = await browser.get_current_page()
                 initial_page_content = await page.content()
+                
+                # 检查是否在正确的页面（小红书图文上传页面）
+                if "小红书" in initial_page_content or "xiaohongshu" in initial_page_content.lower():
+                    # 检查是否在视频上传界面
+                    if "视频" in initial_page_content and "图文" not in initial_page_content:
+                        return ActionResult(error='当前在视频上传界面，请先选择图文上传模式')
+                    
+                    # 检查是否在正确的图文上传界面
+                    if "拖拽图片到此" not in initial_page_content and "点击上传" not in initial_page_content and "上传图片" not in initial_page_content:
+                        return ActionResult(error='当前不在图文上传界面，请先选择图文上传模式')
+                
             except Exception as e:
                 logger.warning(f"无法获取初始页面内容: {e}")
                 initial_page_content = ""
