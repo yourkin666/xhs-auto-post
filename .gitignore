@@ -54,3 +54,8 @@ node_modules/
 build/
 dist/
 *.egg-info/ 
+
+# tmp
+tmp/*
+!tmp/.gitkeep
+!tmp/xiaohongshu_posts/.gitkeep 
