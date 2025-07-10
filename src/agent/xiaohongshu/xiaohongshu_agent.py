@@ -455,123 +455,57 @@ class XiaohongshuAgent:
             content = "今天的分享 ✨"
         
         return content
-    
-    async def login_xiaohongshu(self) -> bool:
-        """登录小红书"""
+
+    async def login_xiaohongshu(self, status_callback=None) -> bool:
+        """只使用cookie登录小红书"""
         try:
-            # 🔧 关键修复：检查停止状态
+            # 检查停止状态
             if self.stop_requested:
                 logger.info("🛑 任务已停止，跳过登录")
                 return False
-                
+
             await self.setup_browser()
-            
-            # 🔧 关键修复：setup_browser后再次检查停止状态
+
+            # setup_browser后再次检查停止状态
             if self.stop_requested:
                 logger.info("🛑 任务已停止，跳过登录")
                 return False
-            
-            # 优先使用cookie登录
-            if self.use_cookie_login:
-                logger.info("🍪 尝试使用cookie登录...")
-                cookie_success = await self._verify_cookie_login()
-                
-                if cookie_success:
-                    logger.info("✅ Cookie登录成功")
-                    return True
-                else:
-                    logger.warning("⚠️ Cookie登录失败，将尝试其他登录方式")
-            
-            # 如果cookie登录失败，提供备用登录指导
-            logger.info("💡 请手动完成登录或提供有效的cookies")
-            
-            # 创建简化的登录验证任务
-            login_task = """
-            请帮我登录小红书，请按照以下步骤操作：
-            
-            1. 打开小红书网站 https://www.xiaohongshu.com
-            2. 仔细观察页面，寻找登录相关的元素：
-               - 查找"登录"按钮
-               - 查找"注册登录"按钮  
-               - 查找用户头像图标（未登录状态下通常显示默认头像）
-               - 查找右上角的"登录/注册"链接
-               - 如果看到"未登录"或类似提示，点击相关区域
-            3. 如果找到登录按钮，点击它
-            4. 如果没有找到明显的登录按钮，尝试以下方法：
-               - 点击页面右上角的用户区域
-               - 查找并点击"我的"或"个人中心"
-               - 尝试访问需要登录的功能（如创作中心）
-            5. 等待登录界面出现（可能是弹窗或新页面）
-            6. 如果出现登录界面，等待用户手动完成登录（扫码或账号密码）
-            7. 登录成功后，等待3秒确认登录状态
-            8. 检查页面是否显示用户已登录的标识
-            
-            重要提示：
-            - 如果第一次尝试失败，请尝试刷新页面后重试
-            - 小红书可能有反爬虫机制，请模拟真实用户操作
-            - 每步操作后请等待1-2秒
-            - 如果遇到验证码，请等待用户处理
-            """
-            
-            if not self.controller:
-                self.controller = CustomController()
-                
-            # 创建局部变量避免类型问题
-            controller = self.controller
-            assert controller is not None, "Controller不能为None"
-                
-            browser_agent = Agent(
-                task=login_task,
-                llm=self.llm,
-                browser=self.browser,
-                browser_context=self.browser_context,
-                controller=controller,
-            )
-            
-            try:
-                result = await browser_agent.run(max_steps=15)
-            except (asyncio.CancelledError, Exception) as e:
-                # 处理任务被取消或浏览器被关闭的情况
-                if self.stop_requested:
-                    logger.info("🛑 登录过程被停止请求中断")
-                    return False
-                elif "browser" in str(e).lower() or "context" in str(e).lower() or "connection" in str(e).lower():
-                    logger.info("🛑 登录过程因浏览器关闭而中断")
-                    return False
-                else:
-                    logger.warning(f"登录过程出现异常: {e}")
-                    return False
-            
-            # 改进登录成功检查逻辑
-            final_result = result.final_result()
-            result_str = str(final_result).lower()
-            
-            # 使用配置文件中的标识符
-            success_indicators = XiaohongshuLoginConfig.get_login_success_indicators()
-            failure_indicators = XiaohongshuLoginConfig.get_login_failure_indicators()
-            
-            # 检查是否有失败指标
-            has_failure = any(indicator in result_str for indicator in failure_indicators)
-            # 检查是否有成功指标
-            has_success = any(indicator in result_str for indicator in success_indicators)
-            
-            if has_success and not has_failure:
-                logger.info("小红书登录成功")
-                return True
-            elif has_failure:
-                logger.warning("小红书登录明确失败")
+
+            # 只使用cookie登录
+            if not self.use_cookie_login:
+                error_msg = "未启用Cookie登录。请在【Browser Settings】中启用并提供有效的Cookie文件。"
+                logger.error(f"❌ {error_msg}")
+                if status_callback:
+                    await status_callback(f"❌ {error_msg}")
                 return False
+
+            logger.info("🍪 尝试使用cookie登录...")
+            if status_callback:
+                await status_callback("🍪 尝试使用Cookie登录...")
+
+            cookie_success = await self._verify_cookie_login()
+
+            if cookie_success:
+                logger.info("✅ Cookie登录成功")
+                if status_callback:
+                    await status_callback("✅ Cookie登录成功")
+                return True
             else:
-                # 如果不确定，尝试验证登录状态
-                logger.info("登录状态不确定，尝试验证...")
-                return await self.verify_login_status()
-                
+                error_msg = "Cookie登录失败，Cookie可能已过期或无效。请在【Browser Settings】中更新Cookie文件。"
+                logger.warning(f"⚠️ {error_msg}")
+                if status_callback:
+                    await status_callback(f"❌ {error_msg}")
+                return False
+
         except Exception as e:
-            logger.error(f"登录小红书时出错: {e}")
+            error_msg = f"登录小红书时出错: {e}"
+            logger.error(error_msg, exc_info=True)
+            if status_callback:
+                await status_callback(f"❌ {error_msg}")
             return False
-    
+
     async def verify_login_status(self) -> bool:
-        """验证登录状态"""
+        """验证小红书登录状态"""
         try:
             # 🔧 关键修复：检查停止状态
             if self.stop_requested:
@@ -908,7 +842,13 @@ class XiaohongshuAgent:
     
     @time_execution_async("--run (xiaohongshu_agent)")
     async def run_posting_task(self, max_posts: int = 5, status_callback=None) -> List[Dict[str, Any]]:
-        """运行发帖任务，模仿browser_use_agent的执行控制流"""
+        """
+        运行小红书发帖任务
+        
+        Args:
+            max_posts: 最大发布帖子数量
+            status_callback: 可选的回调函数，用于更新任务状态
+        """
         
         # 🔧 新增：确保开始时状态是干净的
         logger.info("🔄 初始化发帖任务，检查状态...")
@@ -966,7 +906,7 @@ class XiaohongshuAgent:
             # 检查取消状态
             await asyncio.sleep(0)
             
-            login_success = await self.login_xiaohongshu()
+            login_success = await self.login_xiaohongshu(status_callback=update_status)
             if not login_success:
                 logger.error("❌ 登录失败")
                 await update_status("❌ 小红书登录失败", {
