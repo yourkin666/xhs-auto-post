@@ -1,4 +1,4 @@
-# XHS-Auto-Post: AI-Powered Xiaohongshu Automation Tool
+# XHS-Auto-Post: Xiaohongshu Automation Tool
 
 XHS-Auto-Post is an intelligent, automated content posting tool for Xiaohongshu (小红书). It leverages browser automation and Large Language Models (LLMs) to streamline your content creation and publishing workflow.
 
