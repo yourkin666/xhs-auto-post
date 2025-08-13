@@ -5,3 +5,4 @@ langchain-core>=0.3.49
 langchain-openai>=0.3.11
 langchain-mistralai==0.2.4
 langchain-community
+langchain-google-genai

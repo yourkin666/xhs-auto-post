@@ -58,4 +58,9 @@ dist/
 # tmp
 tmp/*
 !tmp/.gitkeep
-!tmp/xiaohongshu_posts/.gitkeep 
+!tmp/xiaohongshu_posts/.gitkeep
+
+# workspace
+workspace/*
+!workspace/.gitkeep
+!workspace/xiaohongshu_posts/.gitkeep 
